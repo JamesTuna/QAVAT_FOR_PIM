@@ -1,0 +1,6 @@
+Recommended Environment:
+  -- Python   >= 3.8
+  -- Pytorch  >= 1.71
+  -- Numpy   
+  -- torchvision 
+  -- tensorboardX 
