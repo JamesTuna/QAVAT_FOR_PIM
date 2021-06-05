@@ -40,8 +40,8 @@ class Bin_weight(torch.autograd.Function):
         self.save_for_backward(input)
         # scale factor (per input channel) for conv layer weights
         if len(input.size()) == 4:
-            n = input.size(0) * input.size(2) * input.size(3)
-            alpha = 1/n * (input.abs().sum(dim=0,keepdim=True).sum(dim=2,keepdim=True).sum(dim=3,keepdim=True))
+            n = input.size(0) * input.size(2) * input.size(3)*input.size(1)
+            alpha = 1/n * (input.abs().sum(dim=0,keepdim=True).sum(dim=2,keepdim=True).sum(dim=3,keepdim=True).sum(dim=1,keepdim=True))
             signed_weight = torch.mul(input.sign().detach() - input.detach() + input, alpha) # STE
         # scale factor (per weight matrix) for linear layer weights
         elif len(input.size()) == 2: 
@@ -104,14 +104,40 @@ class qLinear(nn.Module):
         elif self.nbits_weight == 1:
             Q_weight = Bin_weight.apply(self.weight)
         else:
-            new_weight_scale = torch.max(self.weight.abs()).detach()/self.intervals_weight
-            if self.weight_scale == 0:
-                self.weight_scale += new_weight_scale # initalization
-            if self.training: # running statistics update for weight_scale, disabled in testing
-                self.weight_scale.data = (self.weight_scale * self.smoothness + new_weight_scale * (1-self.smoothness)).data
-            quant_weight = (self.weight//self.weight_scale).clamp(-self.intervals_weight,self.intervals_weight)
-            dequant_weight = quant_weight * self.weight_scale
-            Q_weight =  dequant_weight.detach() - self.weight.detach() + self.weight # STE
+            # fixed scale deprecated
+            #new_weight_scale = torch.max(self.weight.abs()).detach()/self.intervals_weight
+            #if self.weight_scale == 0:
+            #    self.weight_scale += new_weight_scale # initalization
+            #if self.training: # running statistics update for weight_scale, disabled in testing
+            #    self.weight_scale.data = (self.weight_scale * self.smoothness + new_weight_scale * (1-self.smoothness)).data
+            #quant_weight = (self.weight//self.weight_scale).clamp(-self.intervals_weight,self.intervals_weight)
+            #dequant_weight = quant_weight * self.weight_scale
+            #Q_weight =  dequant_weight.detach() - self.weight.detach() + self.weight # STE
+            
+            
+            # dynamic scale in training
+            if self.training or self.weight_scale==0:
+                # training, update scale by line search
+                nLevel = self.intervals_weight
+                gs_n = 10
+                init_scale = (self.weight.abs().max()/nLevel).data
+                end_scale = (torch.quantile(self.weight.abs(),0.5)/nLevel).data
+                gs_interval = (init_scale-end_scale)/(gs_n-1)
+                scales = torch.arange(init_scale,end_scale-0.1*gs_interval,-gs_interval)
+                scales = scales.unsqueeze(1).unsqueeze(2).to(self.weight.device)
+                weights = self.weight.unsqueeze(0)
+                Q_weights = torch.round(weights/scales).clamp_(-nLevel,nLevel)
+                DQ_weights = Q_weights * scales
+                L2errs = ((weights-DQ_weights)**2).sum(dim=[1,2],keepdim=False)
+                index = torch.argmin(L2errs)
+                self.weight_scale.data = (init_scale - index * gs_interval).data
+                Q_weight = DQ_weights[index].squeeze(0).detach() - self.weight.detach() + self.weight # STE
+            else:
+                # evaluation, scale not updated
+                quant_weight = torch.round((self.weight/self.weight_scale)).clamp(-self.intervals_weight,self.intervals_weight)
+                dequant_weight = quant_weight * self.weight_scale
+                Q_weight =  dequant_weight.detach() - self.weight.detach() + self.weight # STE
+            
 
         if self.weight_variation is not None:
             Q_weight = torch.mul(Q_weight,self.weight_variation) # weight variation
@@ -176,14 +202,38 @@ class qConv2d(nn.Module):
         elif self.nbits_weight == 1:
             Q_weight = Bin_weight.apply(self.weight)
         else:
-            new_weight_scale = torch.max(self.weight.abs()).detach()/self.intervals_weight
-            if self.weight_scale == 0:
-                self.weight_scale += new_weight_scale # initalization
-            if self.training: # running statistics update for weight_scale, disabled in testing
-                self.weight_scale.data = (self.weight_scale * self.smoothness + new_weight_scale * (1-self.smoothness)).data
-            quant_weight = (self.weight//self.weight_scale).clamp(-self.intervals_weight,self.intervals_weight)
-            dequant_weight = quant_weight * self.weight_scale
-            Q_weight =  dequant_weight.detach() - self.weight.detach() + self.weight # STE
+            # fixed scale deprecated
+            #new_weight_scale = torch.max(self.weight.abs()).detach()/self.intervals_weight
+            #if self.weight_scale == 0:
+            #    self.weight_scale += new_weight_scale # initalization
+            #if self.training: # running statistics update for weight_scale, disabled in testing
+            #    self.weight_scale.data = (self.weight_scale * self.smoothness + new_weight_scale * (1-self.smoothness)).data
+            #quant_weight = (self.weight//self.weight_scale).clamp(-self.intervals_weight,self.intervals_weight)
+            #dequant_weight = quant_weight * self.weight_scale
+            #Q_weight =  dequant_weight.detach() - self.weight.detach() + self.weight # STE
+            
+            # dynamic scale in training
+            if self.training or self.weight_scale==0:
+                # training, update scale by line search
+                nLevel = self.intervals_weight
+                gs_n = 10
+                init_scale = (self.weight.abs().max()/nLevel).data
+                end_scale = (torch.quantile(self.weight.abs(),0.5)/nLevel).data
+                gs_interval = (init_scale-end_scale)/(gs_n-1)
+                scales = torch.arange(init_scale,end_scale-0.1*gs_interval,-gs_interval)
+                scales = scales.unsqueeze(1).unsqueeze(2).unsqueeze(3).unsqueeze(4).to(self.weight.device)
+                weights = self.weight.unsqueeze(0)
+                Q_weights = torch.round(weights/scales).clamp_(-nLevel,nLevel)
+                DQ_weights = Q_weights * scales
+                L2errs = ((weights-DQ_weights)**2).sum(dim=[1,2,3,4],keepdim=False)
+                index = torch.argmin(L2errs)
+                self.weight_scale.data = (init_scale - index * gs_interval).data
+                Q_weight = DQ_weights[index].squeeze(0).detach() - self.weight.detach() + self.weight # STE
+            else:
+                # evaluation, scale not updated
+                quant_weight = torch.round((self.weight/self.weight_scale)).clamp(-self.intervals_weight,self.intervals_weight)
+                dequant_weight = quant_weight * self.weight_scale
+                Q_weight =  dequant_weight.detach() - self.weight.detach() + self.weight # STE
 
         if self.weight_variation is not None:
             Q_weight = torch.mul(Q_weight,self.weight_variation) # weight variation

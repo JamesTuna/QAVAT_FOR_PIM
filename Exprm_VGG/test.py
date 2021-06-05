@@ -27,6 +27,14 @@ test_loader.num_workers = 4
 
 print("Try loading %s"%args.load)
 saved_model = torch.load(args.load,map_location='cpu')
+# weight_scale issue
+for para_name in saved_model.keys():
+      if para_name.endswith('weight_scale'):
+          para = saved_model[para_name]
+          if not para.size() == torch.Size([1]):
+              para = para.unsqueeze(0)
+              saved_model[para_name] = para
+
 model.load_state_dict(saved_model)
 print("load succeeded")
 print("model basename: "+os.path.basename(args.load))

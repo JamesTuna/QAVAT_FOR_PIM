@@ -2,7 +2,7 @@ import torch,torchvision,os
 import torchvision.transforms as transforms
 import numpy as np
 
-def get_loader(dset,batch_size,test_size=None,test_batch_size=1000):
+def get_loader(dset,batch_size,test_size=None,test_batch_size=500):
     if dset == 'MNIST':
         transf = transforms.Compose([transforms.ToTensor(),transforms.Normalize((0.1307,), (0.3081,))])
         # MNIST Dataset (Images and Labels)
@@ -37,7 +37,28 @@ def get_loader(dset,batch_size,test_size=None,test_batch_size=1000):
 
         test_dataset = torchvision.datasets.CIFAR10(root='../data', train=False,download=True, transform=transform_test)
         test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=test_batch_size,shuffle=False)
+    
+    elif dset == 'CIFAR100':
+        CIFAR100_TRAIN_MEAN = (0.5070751592371323, 0.48654887331495095, 0.4409178433670343)
+        CIFAR100_TRAIN_STD = (0.2673342858792401, 0.2564384629170883, 0.27615047132568404)
+        transform_train = transforms.Compose([
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomRotation(15),
+            transforms.ToTensor(),
+            transforms.Normalize(CIFAR100_TRAIN_MEAN, CIFAR100_TRAIN_STD)
+        ])
+        transform_test = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(CIFAR100_TRAIN_MEAN, CIFAR100_TRAIN_STD)
+        ])
+        train_dataset = torchvision.datasets.CIFAR100(root='../data', train=True, download=True, transform=transform_train)
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
+        test_dataset = torchvision.datasets.CIFAR100(root='../data', train=False,download=True, transform=transform_test)
+        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=test_batch_size,shuffle=False)
+        
+    
     else:
         print('unrecogonized dataset')
         exit(1)
